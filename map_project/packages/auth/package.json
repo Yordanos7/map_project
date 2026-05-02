@@ -1,0 +1,24 @@
+{
+  "name": "@map_project/auth",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@map_project/db": "*",
+    "@map_project/env": "*",
+    "better-auth": "1.5.5",
+    "dotenv": "^17.2.2",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@map_project/config": "*",
+    "typescript": "^5"
+  }
+}

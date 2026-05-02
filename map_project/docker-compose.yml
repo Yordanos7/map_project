@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: map_project
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+volumes:
+  postgis_data:
