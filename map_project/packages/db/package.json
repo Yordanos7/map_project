@@ -13,7 +13,7 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "postinstall": "prisma generate",
+    "postinstall": "node -e \"if (process.env.DATABASE_URL) { require('child_process').execSync('prisma generate', { stdio: 'inherit' }) }\"",
     "db:studio": "prisma studio",
     "db:seed": "tsx --env-file=../../apps/server/.env src/seed.ts"
   },
