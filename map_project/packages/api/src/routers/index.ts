@@ -1,4 +1,5 @@
 import { protectedProcedure, publicProcedure, router } from "../index";
+import { adminRouter } from "./admin";
 import { mapRouter } from "./map";
 
 export const appRouter = router({
@@ -12,5 +13,6 @@ export const appRouter = router({
     };
   }),
   map: mapRouter,
+  admin: adminRouter,
 });
 export type AppRouter = typeof appRouter;

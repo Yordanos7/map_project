@@ -9,7 +9,7 @@ export default function DataAccessPanel() {
         return (
             <button
                 onClick={() => setIsOpen(true)}
-                className="absolute bottom-4 right-16 z-[1000] w-10 h-10 bg-white shadow-lg flex items-center justify-center rounded-lg border border-slate-100 hover:bg-slate-50 transition-all text-slate-600"
+                className="absolute bottom-4 right-16 z-[1000] w-10 h-10 bg-white shadow-lg flex items-center justify-center rounded-lg border border-slate-100 hover:bg-slate-50 transition-all text-slate-600 pointer-events-auto"
                 title="Data Access"
             >
                 <Database className="w-5 h-5" />
@@ -18,7 +18,7 @@ export default function DataAccessPanel() {
     }
 
     return (
-        <div className="absolute bottom-4 right-16 z-[1000] w-72 bg-white/95 backdrop-blur-md shadow-2xl rounded-xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-4">
+        <div className="absolute bottom-4 right-16 z-[1000] w-72 bg-white/95 backdrop-blur-md shadow-2xl rounded-xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-4 pointer-events-auto">
             <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <h3 className="text-[11px] font-bold text-slate-700 uppercase tracking-widest flex items-center gap-2">
                     <Database className="w-3.5 h-3.5 text-primary" />

@@ -183,6 +183,137 @@ export const mapRouter = router({
     }),
 
     /**
+     * Searches real data across places, facilities, and admin units.
+     */
+    searchLocations: publicProcedure
+        .input((v: unknown) => v as { query: string })
+        .query(async ({ input }) => {
+            const query = (input.query || "").trim();
+            if (query.length < 3) return [];
+            const like = `%${query.replace(/[%_]/g, "\\$&")}%`;
+
+            const settlements = await prisma.$queryRaw<
+                Array<{ gid: number; name: string | null; place: string | null; population: string | null; lon: number; lat: number; }>
+            >`
+              SELECT gid, name, place, population, ST_X(geom) AS lon, ST_Y(geom) AS lat
+              FROM eth_settlements
+              WHERE geom IS NOT NULL
+                AND (name ILIKE ${like} OR name_en ILIKE ${like})
+              ORDER BY CASE WHEN name ILIKE ${like} THEN 0 WHEN name_en ILIKE ${like} THEN 1 ELSE 2 END, NULLIF(population, '')::int DESC NULLS LAST
+              LIMIT 15
+            `;
+
+            const health = await prisma.$queryRaw<
+                Array<{ gid: number; name: string | null; amenity: string | null; addr_city: string | null; lon: number; lat: number; }>
+            >`
+              SELECT gid, name, amenity, addr_city, ST_X(geom) AS lon, ST_Y(geom) AS lat
+              FROM eth_health
+              WHERE geom IS NOT NULL
+                AND (name ILIKE ${like} OR name_en ILIKE ${like} OR amenity ILIKE ${like})
+              ORDER BY CASE WHEN name ILIKE ${like} THEN 0 WHEN name_en ILIKE ${like} THEN 1 WHEN amenity ILIKE ${like} THEN 2 ELSE 3 END
+              LIMIT 10
+            `;
+
+            const education = await prisma.$queryRaw<
+                Array<{ gid: number; name: string | null; amenity: string | null; addr_city: string | null; lon: number; lat: number; }>
+            >`
+              SELECT gid, name, amenity, addr_city, ST_X(geom) AS lon, ST_Y(geom) AS lat
+              FROM eth_education
+              WHERE geom IS NOT NULL
+                AND (name ILIKE ${like} OR name_en ILIKE ${like} OR amenity ILIKE ${like})
+              ORDER BY CASE WHEN name ILIKE ${like} THEN 0 WHEN name_en ILIKE ${like} THEN 1 WHEN amenity ILIKE ${like} THEN 2 ELSE 3 END
+              LIMIT 10
+            `;
+
+            const regions = await prisma.$queryRaw<
+                Array<{ adm1_pcode: string; adm1_name: string }>
+            >`
+              SELECT adm1_pcode, adm1_name
+              FROM eth_adm1
+              WHERE adm1_name ILIKE ${like}
+              ORDER BY adm1_name
+              LIMIT 10
+            `;
+
+            const zones = await prisma.$queryRaw<
+                Array<{ adm2_pcode: string; adm2_name: string }>
+            >`
+              SELECT adm2_pcode, adm2_name
+              FROM eth_adm2
+              WHERE adm2_name ILIKE ${like}
+              ORDER BY adm2_name
+              LIMIT 10
+            `;
+
+            const woredas = await prisma.$queryRaw<
+                Array<{ adm3_pcode: string; adm3_name: string }>
+            >`
+              SELECT adm3_pcode, adm3_name
+              FROM eth_adm3
+              WHERE adm3_name ILIKE ${like}
+              ORDER BY adm3_name
+              LIMIT 10
+            `;
+
+            return [
+                ...settlements.map((row) => ({
+                    id: `settlement-${row.gid}`,
+                    name: row.name ?? "Unknown Settlement",
+                    category: "Settlement",
+                    type: "settlement",
+                    place: row.place ?? "village",
+                    population: row.population,
+                    lat: Number(row.lat),
+                    lon: Number(row.lon),
+                })),
+                ...health.map((row) => ({
+                    id: `health-${row.gid}`,
+                    name: row.name ?? "Health Facility",
+                    category: "Health Facility",
+                    type: "health",
+                    amenity: row.amenity,
+                    subtitle: row.addr_city ?? "",
+                    lat: Number(row.lat),
+                    lon: Number(row.lon),
+                })),
+                ...education.map((row) => ({
+                    id: `education-${row.gid}`,
+                    name: row.name ?? "Education Facility",
+                    category: "Education Facility",
+                    type: "education",
+                    amenity: row.amenity,
+                    subtitle: row.addr_city ?? "",
+                    lat: Number(row.lat),
+                    lon: Number(row.lon),
+                })),
+                ...regions.map((row) => ({
+                    id: `admin1-${row.adm1_pcode}`,
+                    name: row.adm1_name,
+                    category: "Region",
+                    type: "admin",
+                    adminLevel: 1 as const,
+                    pcode: row.adm1_pcode,
+                })),
+                ...zones.map((row) => ({
+                    id: `admin2-${row.adm2_pcode}`,
+                    name: row.adm2_name,
+                    category: "Zone",
+                    type: "admin",
+                    adminLevel: 2 as const,
+                    pcode: row.adm2_pcode,
+                })),
+                ...woredas.map((row) => ({
+                    id: `admin3-${row.adm3_pcode}`,
+                    name: row.adm3_name,
+                    category: "Woreda",
+                    type: "admin",
+                    adminLevel: 3 as const,
+                    pcode: row.adm3_pcode,
+                })),
+            ];
+        }),
+
+    /**
      * Returns Ethiopian Health Facilities (Hospitals, Clinics, Pharmacies).
      */
     getHealthFacilities: publicProcedure.query(async () => {

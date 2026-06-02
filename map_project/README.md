@@ -97,3 +97,28 @@ map_project/
 - `npm run db:generate`: Generate database client/types
 - `npm run db:migrate`: Run database migrations
 - `npm run db:studio`: Open database studio UI
+
+## Vercel Deployment
+
+This repository is a monorepo with two deployable apps:
+
+- `apps/web` — Next.js frontend
+- `apps/server` — Express/TRPC backend
+
+### Recommended deployment setup
+
+1. Create one Vercel project for `apps/web` and set the project root to `apps/web`.
+2. Create a second Vercel project for `apps/server` and set the project root to `apps/server`.
+3. In the `apps/server` project, add environment variables:
+   - `DATABASE_URL` — your PostgreSQL connection string
+   - `BETTER_AUTH_SECRET` — a random secret (minimum 32 characters)
+   - `BETTER_AUTH_URL` — the backend Vercel URL, e.g. `https://my-server.vercel.app`
+   - `CORS_ORIGIN` — the frontend Vercel URL, e.g. `https://my-web.vercel.app`
+4. In the `apps/web` project, add:
+   - `NEXT_PUBLIC_SERVER_URL` — the backend Vercel URL, e.g. `https://my-server.vercel.app`
+
+### Notes
+
+- `apps/server/vercel.json` is included so Vercel can deploy the backend as a Node function.
+- The frontend uses `NEXT_PUBLIC_SERVER_URL` to call the API and to make auth requests.
+- The backend requires `CORS_ORIGIN` to allow requests from the deployed frontend domain.

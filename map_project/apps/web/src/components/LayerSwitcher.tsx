@@ -20,7 +20,7 @@ export default function LayerSwitcher({ activeLayers, onToggleLayer }: LayerSwit
     const currentBasemap = BASEMAPS.find(b => activeLayers.includes(b.id)) || BASEMAPS[0];
 
     return (
-        <div className="absolute bottom-20 left-4 z-[1000] flex flex-col items-start gap-2">
+        <div className="absolute bottom-20 left-4 z-[1000] flex flex-col items-start gap-2 pointer-events-auto">
             {isOpen && (
                 <div className="flex gap-2 p-2 bg-white/90 backdrop-blur-md rounded-lg shadow-lg border border-slate-100 animate-in fade-in slide-in-from-bottom-2">
                     {BASEMAPS.map((map) => (

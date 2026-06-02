@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -9,11 +9,13 @@ import "leaflet.heat";
 import "leaflet-draw";
 import * as turf from "@turf/turf";
 import { Crosshair } from "lucide-react";
+import FeatureDetailPanel, { type FeaturePanelData } from "./FeatureDetailPanel";
 import { useQuery } from "@tanstack/react-query";
 import { trpc } from "@/utils/trpc";
 
 interface MapViewProps {
     activeLayers: string[];
+    adminBoundary?: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> | GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
 }
 
 const BASEMAPS: Record<string, L.TileLayer> = {};
@@ -76,6 +78,37 @@ function getRoadStyle(feature?: GeoJSON.Feature): L.PathOptions {
 const ETHIOPIA_CENTER: L.LatLngExpression = [9.145, 40.489];
 const ETHIOPIA_ZOOM = 6;
 
+// ── Spatial filter helpers ────────────────────────────────────────────────────
+function getPolygon(boundary: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon> | GeoJSON.Polygon | GeoJSON.MultiPolygon): GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null {
+    if (!boundary) return null;
+    if (boundary.type === "Feature") {
+        return boundary as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+    }
+
+    if (boundary.type === "FeatureCollection") {
+        const collection = boundary as GeoJSON.FeatureCollection<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+        if (!Array.isArray(collection.features) || collection.features.length === 0) return null;
+        const firstFeature = collection.features[0];
+        if (!firstFeature || firstFeature.type !== "Feature") return null;
+        return firstFeature as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
+    }
+
+    // Raw geometry object
+    return {
+        type: "Feature",
+        properties: {},
+        geometry: boundary as GeoJSON.Polygon | GeoJSON.MultiPolygon,
+    };
+}
+
+function pointInBoundary(lat: number, lon: number, poly: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>): boolean {
+    return turf.booleanPointInPolygon(turf.point([lon, lat]), poly);
+}
+
+function featureIntersects(feature: GeoJSON.Feature, poly: GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>): boolean {
+    try { return turf.booleanIntersects(feature, poly); } catch { return false; }
+}
+
 const MapView = forwardRef<{
     locateAdmin: (bbox: [number,number,number,number], geojson: any, name: string) => void;
     startBuffer: (radiusKm: number) => void;
@@ -85,10 +118,13 @@ const MapView = forwardRef<{
     startSuitability: (layers: string[], weights: number[]) => void;
     stopSuitability: () => void;
     setTimeFilter: (year: number | null) => void;
-}, MapViewProps>(function MapView({ activeLayers }, ref) {
+}, MapViewProps>(function MapView({ activeLayers, adminBoundary }, ref) {
     const mapRef = useRef<L.Map | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const adminHighlightRef = useRef<L.GeoJSON | null>(null);
+    const searchMarkerRef = useRef<L.Layer | null>(null);
+    const adminBoundaryRef = useRef<GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon> | null>(null);
+    const adminBoundaryPoly = useMemo(() => adminBoundary ? getPolygon(adminBoundary) : null, [adminBoundary]);
     // Analysis tool refs
     const drawLayerRef = useRef<L.FeatureGroup | null>(null);
     const analysisResultRef = useRef<L.Layer | null>(null);
@@ -126,14 +162,7 @@ const MapView = forwardRef<{
     const [energyTelecomLoaded, setEnergyTelecomLoaded] = useState(false);
 
     // Feature description panel
-    const [featurePanel, setFeaturePanel] = useState<{
-        title: string;
-        type: "Point" | "LineString" | "Polygon" | "MultiLineString" | "MultiPolygon";
-        layer: string;
-        color: string;
-        fields: { label: string; value: string }[];
-        coords?: string;
-    } | null>(null);
+    const [featurePanel, setFeaturePanel] = useState<FeaturePanelData | null>(null);
 
     const setFeaturePanelRef = useRef(setFeaturePanel);
     setFeaturePanelRef.current = setFeaturePanel;
@@ -218,6 +247,26 @@ const MapView = forwardRef<{
             }).addTo(map);
             adminHighlightRef.current = layer;
             map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: [40, 40] });
+        },
+
+        locatePoint(lat, lng, label) {
+            const map = mapRef.current;
+            if (!map) return;
+            if (searchMarkerRef.current) {
+                map.removeLayer(searchMarkerRef.current);
+                searchMarkerRef.current = null;
+            }
+            const marker = L.circleMarker([lat, lng], {
+                radius: 10,
+                fillColor: "#f59e0b",
+                color: "#d97706",
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.65,
+            }).addTo(map);
+            marker.bindTooltip(label, { permanent: false, direction: "top", offset: [0, -10] }).openTooltip();
+            searchMarkerRef.current = marker;
+            map.setView([lat, lng], 14);
         },
 
         startBuffer(radiusKm) {
@@ -369,6 +418,26 @@ const MapView = forwardRef<{
         map.off(L.Draw.Event.CREATED);
     }
 
+    // When admin boundary changes, update the ref and tear down all data layers so they rebuild filtered
+    useEffect(() => {
+        adminBoundaryRef.current = adminBoundaryPoly;
+        const map = mapRef.current;
+        if (!map) return;
+        // Remove all data layers — they will be re-added by their own effects with the new filter
+        const layerRefs = [
+            roadsLayerRef, settlementsLayerRef, healthLayerRef, educationLayerRef,
+            railwaysLayerRef, energyTelecomLayerRef,
+        ];
+        layerRefs.forEach(r => { if (r.current) { map.removeLayer(r.current); r.current = null; } });
+        const groupRefs = [popLayerRef, landcoverLayerRef, forestsLayerRef, waterLayerRef, agroLayerRef, cropsLayerRef];
+        groupRefs.forEach(r => { if (r.current) { map.removeLayer(r.current as any); r.current = null; } });
+        setRoadsLoaded(false); setPopLoaded(false); setSettlementsLoaded(false);
+        setHealthLoaded(false); setEducationLoaded(false); setLandcoverLoaded(false);
+        setForestsLoaded(false); setWaterLoaded(false); setAgroLoaded(false);
+        setCropsLoaded(false); setRailwaysLoaded(false); setEnergyTelecomLoaded(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [adminBoundary]);
+
     // Initialise the map once
     useEffect(() => {
         if (!containerRef.current || mapRef.current) return;
@@ -425,10 +494,10 @@ const MapView = forwardRef<{
         const shouldShow = activeLayers.includes("population");
 
         if (shouldShow && !popLayerRef.current) {
-            // popData is an array of [lat, lon, intensity]
-            // We scale intensity max so the heat gradient looks correct
-            // The Leaflet plugin is attached to L as L.heatLayer
-            const heatData = (popData as number[][]).map(pt => [pt[0], pt[1], pt[2]]);
+            const poly = adminBoundaryPoly;
+            const heatData = (popData as number[][])
+                .filter(pt => !poly || pointInBoundary(pt[0], pt[1], poly))
+                .map(pt => [pt[0], pt[1], pt[2]]);
 
             // @ts-ignore
             const heatLayer = L.heatLayer(heatData, {
@@ -454,7 +523,7 @@ const MapView = forwardRef<{
             popLayerRef.current = null;
             setPopLoaded(false);
         }
-    }, [activeLayers, popData]);
+    }, [activeLayers, popData, adminBoundaryPoly]);
 
     // Add / remove ETH roads layer
     useEffect(() => {
@@ -464,7 +533,11 @@ const MapView = forwardRef<{
         const shouldShow = activeLayers.includes("roads");
 
         if (shouldShow && !roadsLayerRef.current) {
-            const gl = L.geoJSON(roadsData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...roadsData, features: (roadsData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : roadsData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 style(feature) {
                     const rtt = feature?.properties?.rtt_descri ?? "";
                     if (rtt.includes("Primary")) return { color: "#e63946", weight: 3.5, opacity: 0.9 };
@@ -503,9 +576,7 @@ const MapView = forwardRef<{
             roadsLayerRef.current = null;
             setRoadsLoaded(false);
         }
-    }, [activeLayers, roadsData]);
-
-    // Add / remove Settlements layer
+    }, [activeLayers, roadsData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !settlementsData) return;
@@ -520,7 +591,11 @@ const MapView = forwardRef<{
         };
 
         if (shouldShow && !settlementsLayerRef.current) {
-            const gl = L.geoJSON(settlementsData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...settlementsData, features: (settlementsData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : settlementsData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 pointToLayer(feature, latlng) {
                     const p = feature.properties?.place || "village";
                     const style = getStyle(p);
@@ -568,9 +643,7 @@ const MapView = forwardRef<{
             settlementsLayerRef.current = null;
             setSettlementsLoaded(false);
         }
-    }, [activeLayers, settlementsData]);
-
-    // Add / remove Health Facilities layer
+    }, [activeLayers, settlementsData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !healthData) return;
@@ -586,7 +659,11 @@ const MapView = forwardRef<{
         };
 
         if (shouldShow && !healthLayerRef.current) {
-            const gl = L.geoJSON(healthData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...healthData, features: (healthData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : healthData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 pointToLayer(feature, latlng) {
                     const amenity = feature.properties?.amenity || "clinic";
                     const style = getHealthStyle(amenity);
@@ -637,9 +714,7 @@ const MapView = forwardRef<{
             healthLayerRef.current = null;
             setHealthLoaded(false);
         }
-    }, [activeLayers, healthData]);
-
-    // Add / remove Education Facilities layer
+    }, [activeLayers, healthData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !educationData) return;
@@ -655,7 +730,11 @@ const MapView = forwardRef<{
         };
 
         if (shouldShow && !educationLayerRef.current) {
-            const gl = L.geoJSON(educationData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...educationData, features: (educationData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : educationData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 pointToLayer(feature, latlng) {
                     const amenity = feature.properties?.amenity || "school";
                     const style = getEducationStyle(amenity);
@@ -703,9 +782,7 @@ const MapView = forwardRef<{
             educationLayerRef.current = null;
             setEducationLoaded(false);
         }
-    }, [activeLayers, educationData]);
-
-    // Add / remove Land Cover layer
+    }, [activeLayers, educationData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !landcoverData) return;
@@ -723,13 +800,12 @@ const MapView = forwardRef<{
         };
 
         if (shouldShow && !landcoverLayerRef.current) {
-            // Because there are ~71k points, we MUST force them to be rendered by Canvas internally
+            const poly = adminBoundaryPoly;
             const myRenderer = L.canvas({ padding: 0.5 });
             const lg = L.layerGroup();
-
-            // Generate circles
             for (let i = 0; i < (landcoverData as any).length; i++) {
-                const pt = (landcoverData as any)[i]; // [lat, lon, class]
+                const pt = (landcoverData as any)[i];
+                if (poly && !pointInBoundary(pt[0], pt[1], poly)) continue;
                 const color = getClassColor(pt[2]);
                 const circle = L.circleMarker([pt[0], pt[1]], {
                     renderer: myRenderer,
@@ -752,19 +828,19 @@ const MapView = forwardRef<{
             landcoverLayerRef.current = null;
             setLandcoverLoaded(false);
         }
-    }, [activeLayers, landcoverData]);
-
-    // Add / remove Forests layer
+    }, [activeLayers, landcoverData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !forestsData) return;
 
         const shouldShow = activeLayers.includes("forests");
         if (shouldShow && !forestsLayerRef.current) {
+            const poly = adminBoundaryPoly;
             const myRenderer = L.canvas({ padding: 0.5 });
             const lg = L.layerGroup();
             for (let i = 0; i < (forestsData as any).length; i++) {
                 const pt = (forestsData as any)[i];
+                if (poly && !pointInBoundary(pt[0], pt[1], poly)) continue;
                 lg.addLayer(L.circleMarker([pt[0], pt[1]], {
                     renderer: myRenderer, radius: 2.5, fillColor: "#2ba84a", color: "#2ba84a", weight: 1, fillOpacity: 0.9, interactive: false
                 }));
@@ -777,19 +853,19 @@ const MapView = forwardRef<{
             forestsLayerRef.current = null;
             setForestsLoaded(false);
         }
-    }, [activeLayers, forestsData]);
-
-    // Add / remove Water layer
+    }, [activeLayers, forestsData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !waterData) return;
 
         const shouldShow = activeLayers.includes("water");
         if (shouldShow && !waterLayerRef.current) {
+            const poly = adminBoundaryPoly;
             const myRenderer = L.canvas({ padding: 0.5 });
             const lg = L.layerGroup();
             for (let i = 0; i < (waterData as any).length; i++) {
                 const pt = (waterData as any)[i];
+                if (poly && !pointInBoundary(pt[0], pt[1], poly)) continue;
                 lg.addLayer(L.circleMarker([pt[0], pt[1]], {
                     renderer: myRenderer, radius: 2.5, fillColor: "#00b4d8", color: "#00b4d8", weight: 1, fillOpacity: 0.9, interactive: false
                 }));
@@ -802,19 +878,19 @@ const MapView = forwardRef<{
             waterLayerRef.current = null;
             setWaterLoaded(false);
         }
-    }, [activeLayers, waterData]);
-
-    // Add / remove Agro-Ecology layer
+    }, [activeLayers, waterData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !agroData) return;
 
         const shouldShow = activeLayers.includes("agroecology");
         if (shouldShow && !agroLayerRef.current) {
+            const poly = adminBoundaryPoly;
             const myRenderer = L.canvas({ padding: 0.5 });
             const lg = L.layerGroup();
             for (let i = 0; i < (agroData as any).length; i++) {
                 const pt = (agroData as any)[i];
+                if (poly && !pointInBoundary(pt[0], pt[1], poly)) continue;
                 // 16, 17, 18 = Agriculture/Cropland (Yellow-Orange). 9, 12, 13, 14 = Rangeland/Shrub (Lime-Green)
                 const isCrop = [16, 17, 18].includes(pt[2]);
                 const color = isCrop ? "#ffb703" : "#74c69d";
@@ -830,19 +906,19 @@ const MapView = forwardRef<{
             agroLayerRef.current = null;
             setAgroLoaded(false);
         }
-    }, [activeLayers, agroData]);
-
-    // Add / remove Crops layer
+    }, [activeLayers, agroData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !cropsData) return;
 
         const shouldShow = activeLayers.includes("crops");
         if (shouldShow && !cropsLayerRef.current) {
+            const poly = adminBoundaryPoly;
             const myRenderer = L.canvas({ padding: 0.5 });
             const lg = L.layerGroup();
             for (let i = 0; i < (cropsData as any).length; i++) {
                 const pt = (cropsData as any)[i];
+                if (poly && !pointInBoundary(pt[0], pt[1], poly)) continue;
                 lg.addLayer(L.circleMarker([pt[0], pt[1]], {
                     renderer: myRenderer, radius: 2.5, fillColor: "#ffb703", color: "#ffb703", weight: 1, fillOpacity: 0.9, interactive: false
                 }));
@@ -855,16 +931,18 @@ const MapView = forwardRef<{
             cropsLayerRef.current = null;
             setCropsLoaded(false);
         }
-    }, [activeLayers, cropsData]);
-
-    // Add / remove Railways layer
+    }, [activeLayers, cropsData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !railwaysData) return;
 
         const shouldShow = activeLayers.includes("railways");
         if (shouldShow && !railwaysLayerRef.current) {
-            const gl = L.geoJSON(railwaysData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...railwaysData, features: (railwaysData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : railwaysData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 style(feature) {
                     const status = feature?.properties?.status?.toLowerCase() ?? "";
                     if (status.includes("operational") || status.includes("existing")) {
@@ -895,16 +973,18 @@ const MapView = forwardRef<{
             railwaysLayerRef.current = null;
             setRailwaysLoaded(false);
         }
-    }, [activeLayers, railwaysData]);
-
-    // Add / remove Energy & Telecom layer
+    }, [activeLayers, railwaysData, adminBoundaryPoly]);
     useEffect(() => {
         const map = mapRef.current;
         if (!map || !energyTelecomData) return;
 
         const shouldShow = activeLayers.includes("energy-telecom");
         if (shouldShow && !energyTelecomLayerRef.current) {
-            const gl = L.geoJSON(energyTelecomData as GeoJSON.FeatureCollection, {
+            const poly = adminBoundaryPoly;
+            const filtered = poly
+                ? { ...energyTelecomData, features: (energyTelecomData as GeoJSON.FeatureCollection).features.filter(f => featureIntersects(f, poly)) }
+                : energyTelecomData;
+            const gl = L.geoJSON(filtered as GeoJSON.FeatureCollection, {
                 style(feature) {
                     const power = feature?.properties?.power?.toLowerCase() ?? "";
                     if (power === "line" || power === "cable") {
@@ -939,7 +1019,7 @@ const MapView = forwardRef<{
             energyTelecomLayerRef.current = null;
             setEnergyTelecomLoaded(false);
         }
-    }, [activeLayers, energyTelecomData]);
+    }, [activeLayers, energyTelecomData, adminBoundaryPoly]);
 
     const handleLocate = () => {
         mapRef.current?.locate({ setView: true, maxZoom: 14 });
@@ -1310,62 +1390,9 @@ const MapView = forwardRef<{
 
             </div>
 
-            {/* Feature Description Panel */}
+            {/* Feature Detail Panel */}
             {featurePanel && (
-                <div className="absolute top-4 right-16 z-[1000] w-72 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden animate-fade-in pointer-events-auto">
-                    {/* Header */}
-                    <div className="px-4 py-3 flex items-start gap-3" style={{ borderLeft: `4px solid ${featurePanel.color}` }}>
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                                {/* Geometry type badge */}
-                                <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border"
-                                    style={{ color: featurePanel.color, borderColor: featurePanel.color, background: featurePanel.color + "18" }}>
-                                    {featurePanel.type.includes("Line") ? "⟋ Line" :
-                                     featurePanel.type.includes("Point") ? "● Point" : "▬ Polygon"}
-                                </span>
-                                <span className="text-[9px] text-slate-400 font-medium truncate">{featurePanel.layer}</span>
-                            </div>
-                            <p className="text-sm font-bold text-slate-800 leading-tight truncate">{featurePanel.title}</p>
-                            {featurePanel.coords && (
-                                <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{featurePanel.coords}</p>
-                            )}
-                        </div>
-                        <button
-                            onClick={() => setFeaturePanel(null)}
-                            className="text-slate-400 hover:text-slate-600 transition-colors shrink-0 mt-0.5"
-                        >
-                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M18 6L6 18M6 6l12 12" />
-                            </svg>
-                        </button>
-                    </div>
-
-                    {/* Fields */}
-                    <div className="px-4 pb-4 space-y-2 max-h-72 overflow-y-auto">
-                        <div className="border-t border-slate-50 pt-3 space-y-2">
-                            {featurePanel.fields.filter(f => f.value && f.value !== "N/A").map((field, i) => (
-                                <div key={i} className="flex justify-between items-start gap-3">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">{field.label}</span>
-                                    <span className="text-xs text-slate-700 font-medium text-right capitalize">{field.value}</span>
-                                </div>
-                            ))}
-                            {featurePanel.fields.filter(f => !f.value || f.value === "N/A").map((field, i) => (
-                                <div key={i} className="flex justify-between items-start gap-3 opacity-40">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">{field.label}</span>
-                                    <span className="text-xs text-slate-400 text-right">N/A</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-[9px] text-slate-400 uppercase tracking-widest">Source: SSGI / OSM</span>
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: featurePanel.color + "18", color: featurePanel.color }}>
-                            {featurePanel.layer}
-                        </span>
-                    </div>
-                </div>
+                <FeatureDetailPanel panel={featurePanel} onClose={() => setFeaturePanel(null)} />
             )}
 
             {/* Analysis result overlay */}

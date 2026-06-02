@@ -2,7 +2,7 @@ import { Button } from "@map_project/ui/components/button";
 import { Input } from "@map_project/ui/components/input";
 import { Label } from "@map_project/ui/components/label";
 import { useForm } from "@tanstack/react-form";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import z from "zod";
 
@@ -12,6 +12,8 @@ import Loader from "./ui/Loader";
 
 export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirect = searchParams.get("redirect") ?? "/dashboard";
   const { isPending } = authClient.useSession();
 
   const form = useForm({
@@ -27,7 +29,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
         },
         {
           onSuccess: () => {
-            router.push("/dashboard");
+            router.push(redirect);
             toast.success("Sign in successful");
           },
           onError: (error) => {

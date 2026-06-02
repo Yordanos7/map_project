@@ -6,7 +6,7 @@ import SignInForm from "@/components/SignInForm";
 import SignUpForm from "@/components/SignUpForm";
 
 export default function LoginPage() {
-  const [showSignIn, setShowSignIn] = useState(false);
+  const [showSignIn, setShowSignIn] = useState(true);
 
   return showSignIn ? (
     <SignInForm onSwitchToSignUp={() => setShowSignIn(false)} />

@@ -34,6 +34,10 @@ app.get("/", (_req, res) => {
   res.status(200).send("OK");
 });
 
-app.listen(3000, () => {
-  console.log("Server is running on http://localhost:3000");
-});
+if (!process.env.VERCEL) {
+  app.listen(3000, () => {
+    console.log("Server is running on http://localhost:3000");
+  });
+}
+
+export default app;
