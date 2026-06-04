@@ -126,7 +126,7 @@ interface SearchResultItem {
     id: string;
     name: string;
     category: string;
-    type: "settlement" | "health" | "education" | "admin" | "coordinate";
+    type: string;
     lat?: number;
     lon?: number;
     place?: string;
