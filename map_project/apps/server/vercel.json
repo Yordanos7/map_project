@@ -8,7 +8,7 @@
   ],
   "functions": {
     "src/index.ts": {
-      "runtime": "vercel-node@latest"
+      "maxDuration": 10
     }
   }
 }
