@@ -1,15 +1,14 @@
 {
-  "version": 3,
-  "builds": [
+  "version": 2,
+  "rewrites": [
     {
-      "src": "src/index.ts",
-      "use": "@vercel/node"
+      "source": "/(.*)",
+      "destination": "/src/index.ts"
     }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/src/index.ts"
+  "functions": {
+    "src/index.ts": {
+      "runtime": "vercel-node@latest"
     }
-  ]
+  }
 }
