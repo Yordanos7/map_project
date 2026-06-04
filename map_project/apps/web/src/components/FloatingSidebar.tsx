@@ -497,9 +497,8 @@ function ThematicLayersPanel({
                             {/* Group header card */}
                             <button
                                 onClick={() => setExpandedGroup(isExpanded ? null : group.title)}
-                                className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-all ${
-                                    isExpanded ? group.bg : "bg-white hover:" + group.bg
-                                }`}
+                                className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-all ${isExpanded ? group.bg : "bg-white hover:" + group.bg
+                                    }`}
                             >
                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${group.bg}`}>
                                     <group.icon className={`w-4 h-4 ${group.color}`} />
@@ -539,9 +538,8 @@ function ThematicLayersPanel({
                                                     onChange={() => onToggleLayer(layer.id)}
                                                 />
                                                 <div className="flex-1 min-w-0">
-                                                    <p className={`text-[12px] font-semibold ${
-                                                        isActive ? group.color : "text-slate-600"
-                                                    }`}>
+                                                    <p className={`text-[12px] font-semibold ${isActive ? group.color : "text-slate-600"
+                                                        }`}>
                                                         {layer.label}
                                                     </p>
                                                     <p className="text-[10px] text-slate-400">{layer.desc}</p>
@@ -564,9 +562,10 @@ function ThematicLayersPanel({
 
 interface AnalysisPanelProps {
     onSetTimeFilter?: (year: number | null) => void;
+    activeLayers: string[];
 }
 
-function AnalysisPanel({ onSetTimeFilter }: AnalysisPanelProps) {
+function AnalysisPanel({ onSetTimeFilter, activeLayers }: AnalysisPanelProps) {
     const [activeTool, setActiveTool] = useState<string | null>(null);
     const [timeYear, setTimeYear] = useState(2020);
     const [timeActive, setTimeActive] = useState(false);
@@ -580,9 +579,8 @@ function AnalysisPanel({ onSetTimeFilter }: AnalysisPanelProps) {
             <div className="border border-slate-100 rounded-lg overflow-hidden">
                 <button
                     onClick={() => activate("time")}
-                    className={`w-full flex items-center gap-3 p-3 text-left transition-all ${
-                        activeTool === "time" ? "bg-amber-50 text-amber-700" : "bg-white hover:bg-slate-50 text-slate-600"
-                    }`}
+                    className={`w-full flex items-center gap-3 p-3 text-left transition-all ${activeTool === "time" ? "bg-amber-50 text-amber-700" : "bg-white hover:bg-slate-50 text-slate-600"
+                        }`}
                 >
                     <Clock className="w-4 h-4 shrink-0" />
                     <span className="text-[11px] font-semibold">Time-Slider Control</span>
@@ -609,9 +607,8 @@ function AnalysisPanel({ onSetTimeFilter }: AnalysisPanelProps) {
                                 setTimeActive(next);
                                 onSetTimeFilter?.(next ? timeYear : null);
                             }}
-                            className={`w-full py-1.5 text-[10px] font-bold uppercase rounded transition-all ${
-                                timeActive ? "bg-amber-500 text-white hover:bg-amber-600" : "bg-white border border-amber-300 text-amber-600 hover:bg-amber-50"
-                            }`}
+                            className={`w-full py-1.5 text-[10px] font-bold uppercase rounded transition-all ${timeActive ? "bg-amber-500 text-white hover:bg-amber-600" : "bg-white border border-amber-300 text-amber-600 hover:bg-amber-50"
+                                }`}
                         >
                             {timeActive ? "Disable Filter" : "Enable Filter"}
                         </button>
